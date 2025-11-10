@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Planejamento de Aula</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px auto; max-width: 760px; color:#222; line-height:1.6; }
+    h1 { text-align:center; margin-bottom: 10px; }
+    .sub { text-align:center; color:#666; margin-bottom: 24px; font-size: 14px; }
+    label { display:block; margin-top:14px; font-weight:700; }
+    input, textarea { width:100%; padding:10px; margin-top:6px; box-sizing:border-box; border:1px solid #ccc; border-radius:6px; }
+    textarea { min-height: 80px; }
+
+    .bar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 16px 0 8px; flex-wrap: wrap; }
+    .controls { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    .status { font-size:14px; color:#555; flex:1; min-width:180px; }
+    input[type="file"] { display:none; }
+
+    .upload-btn, .save-btn, .add-btn, .report-btn {
+      background:#004aad; color:#fff; padding:10px 16px; border-radius:6px;
+      cursor:pointer; border:none; font-size:14px;
+    }
+    .upload-btn:hover, .save-btn:hover, .add-btn:hover, .report-btn:hover { background:#00337f; }
+    .save-btn { background:#0a7e2d; }
+    .save-btn:hover { background:#06651f; }
+    .add-btn { background:#a76200; }
+    .add-btn:hover { background:#844b00; }
+    .report-btn { background:#444; }
+
+    .aula-block {
+      border:1px solid #ccc; padding:15px; margin-top:15px; border-radius:6px; background:#fafafa;
+      position: relative;
+    }
+    .aula-header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+    .aula-title { margin:0; color:#004aad; font-size:16px; flex:1; }
+    .drag-handle {
+      cursor: grab; user-select:none; font-size:18px; padding:4px 8px; border-radius:4px; background:#e3e3e3;
+    }
+    .drag-handle:active { cursor: grabbing; }
+    .remove-btn {
+      background:#c23b22; color:#fff; border:none; border-radius:4px;
+      padding:6px 10px; cursor:pointer; font-size:13px;
+    }
+    .remove-btn:hover { background:#8f2713; }
+
+    /* estados de arrasto */
+    .drag-over { outline: 2px dashed #004aad; background:#f0f6ff; }
+
+  </style>
+</head>
+<body>
+
+  <h1>Planejamento de Aula</h1>
+  <div class="sub">Preencha por UC, adicione e <b>reordene</b> dias; gere relatório e salve em XML</div>
+
+  <div class="bar">
+    <div class="controls">
+      <input type="file" id="arquivo" accept=".xml" />
+      <label for="arquivo" class="upload-btn">📂 Carregar XML</label>
+      <button type="button" id="salvar" class="save-btn">💾 Salvar XML</button>
+      <button type="button" id="adicionar" class="add-btn">➕ Adicionar Dia</button>
+      <button type="button" id="relatorio" class="report-btn">📝 Relatório</button>
+    </div>
+    <div class="status" id="status">Nenhum arquivo carregado</div>
+  </div>
+
+  <form id="form">
+    <label for="uc">UC:</label>
+    <input type="text" id="uc" name="uc" placeholder="Ex: UC2 - Manipular imagem bitmap">
+
+    <div id="aulas-container">
+      <!-- Blocos de aula gerados dinamicamente -->
+    </div>
+  </form>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const btnSalvar = document.getElementById('salvar');
+    const btnAdd = document.getElementById('adicionar');
+    const btnRelatorio = document.getElementById('relatorio');
+    const inputFile = document.getElementById('arquivo');
+    const ucField = document.getElementById('uc');
+    const aulasDiv = document.getElementById('aulas-container');
+
+    let nomeArquivo = "plano_aula.xml";
+    let dragSrcEl = null; // elemento origem no DnD
+
+    function renumerarDias() {
+      const blocks = [...document.querySelectorAll('.aula-block')];
+      blocks.forEach((b, i) => {
+        b.querySelector('.aula-title').textContent = `Dia ${i + 1}`;
+      });
+      statusEl.textContent = `${blocks.length} dia(s) no plano`;
+    }
+
+    function criarBlocoAula(aulaData = {}) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'aula-block';
+      wrapper.setAttribute('draggable', 'true');
+
+      wrapper.innerHTML = `
+        <div class="aula-header">
+          <span class="drag-handle" title="Arraste para reordenar">≡</span>
+          <h3 class="aula-title">Dia</h3>
+          <button type="button" class="remove-btn">Remover</button>
+        </div>
+
+        <label>Data:</label>
+        <input type="date" class="data" value="${aulaData.data || ''}">
+        <label>Conteúdo:</label>
+        <textarea class="conteudo">${aulaData.conteudo || ''}</textarea>
+        <label>Sala:</label>
+        <input type="text" class="sala" value="${aulaData.sala || ''}">
+        <label>Professor:</label>
+        <input type="text" class="professor" value="${aulaData.professor || ''}">
+      `;
+
+      // Remover
+      wrapper.querySelector('.remove-btn').addEventListener('click', () => {
+        wrapper.remove();
+        renumerarDias();
+      });
+
+      // Drag & Drop – limitar o arrasto ao "handle"
+      const handle = wrapper.querySelector('.drag-handle');
+      handle.addEventListener('mousedown', () => {
+        wrapper.setAttribute('draggable', 'true');
+      });
+      handle.addEventListener('mouseup', () => {
+        wrapper.setAttribute('draggable', 'true');
+      });
+
+      // Eventos DnD do bloco
+      wrapper.addEventListener('dragstart', (e) => {
+        dragSrcEl = wrapper;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', 'dragging');
+      });
+
+      wrapper.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        wrapper.classList.add('drag-over');
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      wrapper.addEventListener('dragleave', () => {
+        wrapper.classList.remove('drag-over');
+      });
+
+      wrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        wrapper.classList.remove('drag-over');
+        if (!dragSrcEl || dragSrcEl === wrapper) return;
+
+        const blocks = [...aulasDiv.querySelectorAll('.aula-block')];
+        const srcIndex = blocks.indexOf(dragSrcEl);
+        const targetIndex = blocks.indexOf(wrapper);
+
+        if (srcIndex < targetIndex) {
+          // solto depois do alvo
+          aulasDiv.insertBefore(dragSrcEl, wrapper.nextSibling);
+        } else {
+          // solto antes do alvo
+          aulasDiv.insertBefore(dragSrcEl, wrapper);
+        }
+        renumerarDias();
+      });
+
+      wrapper.addEventListener('dragend', () => {
+        [...document.querySelectorAll('.drag-over')].forEach(el => el.classList.remove('drag-over'));
+        dragSrcEl = null;
+      });
+
+      aulasDiv.appendChild(wrapper);
+      renumerarDias();
+    }
+
+    // Adicionar manualmente
+    btnAdd.addEventListener('click', () => criarBlocoAula());
+
+    // Carregar XML existente
+    inputFile.addEventListener('change', () => {
+      const file = inputFile.files[0];
+      if (!file) return;
+      nomeArquivo = file.name;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parser = new DOMParser();
+          const xmlDoc = parser.parseFromString(reader.result, "text/xml");
+          const err = xmlDoc.getElementsByTagName('parsererror')[0];
+          if (err) throw new Error('parsererror');
+
+          const plano = xmlDoc.getElementsByTagName("PlanoDeAula")[0] || xmlDoc;
+          const ucNode = plano.getElementsByTagName("UC")[0];
+          ucField.value = ucNode ? ucNode.textContent : "";
+
+          const aulasContainer = plano.getElementsByTagName("Aulas")[0] || plano;
+          const aulas = Array.from(aulasContainer.getElementsByTagName("Aula"));
+
+          aulasDiv.innerHTML = "";
+          aulas.forEach(a => {
+            criarBlocoAula({
+              data: a.getElementsByTagName("Data")[0]?.textContent || "",
+              conteudo: a.getElementsByTagName("Conteudo")[0]?.textContent || "",
+              sala: a.getElementsByTagName("Sala")[0]?.textContent || "",
+              professor: a.getElementsByTagName("Professor")[0]?.textContent || "",
+            });
+          });
+
+          statusEl.textContent = `Arquivo carregado: ${file.name}`;
+        } catch (e) {
+          statusEl.textContent = 'Erro ao carregar XML.';
+        }
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+
+    // Salvar XML com a ordem atual no DOM
+    btnSalvar.addEventListener('click', () => {
+      const impl = document.implementation;
+      const xml = impl.createDocument(null, "PlanoDeAula", null);
+      const root = xml.documentElement;
+
+      // UC
+      const ucEl = xml.createElement("UC");
+      ucEl.textContent = ucField.value.trim();
+      root.appendChild(ucEl);
+
+      // Aulas
+      const aulasEl = xml.createElement("Aulas");
+      document.querySelectorAll(".aula-block").forEach(block => {
+        const aulaEl = xml.createElement("Aula");
+        const data = xml.createElement("Data");
+        const conteudo = xml.createElement("Conteudo");
+        const sala = xml.createElement("Sala");
+        const professor = xml.createElement("Professor");
+
+        data.textContent = block.querySelector(".data").value;
+        conteudo.textContent = block.querySelector(".conteudo").value;
+        sala.textContent = block.querySelector(".sala").value;
+        professor.textContent = block.querySelector(".professor").value;
+
+        aulaEl.appendChild(data);
+        aulaEl.appendChild(conteudo);
+        aulaEl.appendChild(sala);
+        aulaEl.appendChild(professor);
+        aulasEl.appendChild(aulaEl);
+      });
+      root.appendChild(aulasEl);
+
+      const xmlString = new XMLSerializer().serializeToString(xml);
+      const blob = new Blob([xmlString], { type: "application/xml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = (ucField.value || nomeArquivo.replace(/\.xml$/i,'plano_aula')).replace(/[^\w\-]+/g,'_') + ".xml";
+      a.click();
+      statusEl.textContent = "XML atualizado e baixado.";
+    });
+
+    // Relatório imprimível
+    btnRelatorio.addEventListener('click', () => {
+      const rows = [...document.querySelectorAll('.aula-block')].map((b, i) => {
+        const d = b.querySelector('.data').value || '';
+        const c = (b.querySelector('.conteudo').value || '').replace(/\n/g, '<br>');
+        const s = b.querySelector('.sala').value || '';
+        const p = b.querySelector('.professor').value || '';
+        return `<tr>
+          <td style="padding:8px;border:1px solid #ddd;">${i+1}</td>
+          <td style="padding:8px;border:1px solid #ddd;">${d}</td>
+          <td style="padding:8px;border:1px solid #ddd;">${c}</td>
+          <td style="padding:8px;border:1px solid #ddd;">${s}</td>
+          <td style="padding:8px;border:1px solid #ddd;">${p}</td>
+        </tr>`;
+      }).join('');
+
+      const win = window.open('', '_blank');
+      win.document.write(`
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Relatório - ${ucField.value || 'Plano de Aula'}</title>
+          </head>
+          <body style="font-family: Arial, sans-serif; color:#222;">
+            <h2 style="margin:0 0 4px 0;">Relatório de Planejamento</h2>
+            <div style="color:#555; margin-bottom:16px;">UC: <strong>${ucField.value || '-'}</strong></div>
+            <table style="border-collapse:collapse; width:100%; font-size:14px;">
+              <thead>
+                <tr style="background:#f3f6fb;">
+                  <th style="padding:8px;border:1px solid #ddd; text-align:left;">Dia</th>
+                  <th style="padding:8px;border:1px solid #ddd; text-align:left;">Data</th>
+                  <th style="padding:8px;border:1px solid #ddd; text-align:left;">Conteúdo</th>
+                  <th style="padding:8px;border:1px solid #ddd; text-align:left;">Sala</th>
+                  <th style="padding:8px;border:1px solid #ddd; text-align:left;">Professor</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows || '<tr><td colspan="5" style="padding:12px;border:1px solid #ddd;">Sem registros</td></tr>'}
+              </tbody>
+            </table>
+            <div style="margin-top:18px;">
+              <button onclick="window.print()" style="padding:8px 14px; background:#004aad; color:#fff; border:none; border-radius:4px; cursor:pointer;">Imprimir / Salvar PDF</button>
+            </div>
+          </body>
+        </html>
+      `);
+      win.document.close();
+    });
+
+    // Inicial: um bloco para começar
+    criarBlocoAula();
+  </script>
+</body>
+</html>
